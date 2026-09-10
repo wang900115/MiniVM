@@ -266,7 +266,11 @@ mod tests {
 
     #[test]
     fn test_vm_run() {
-        let bytecode = vec![0x01, 0x0A, 0x01, 0x14, 0x02, 0x00]; // Push 10, Push 20, Add, Stop
+        let bytecode = vec![
+            0x01, 0x0A, // Push 10 2
+            0x01, 0x14, // Push 20 4
+            0x02,       // Add     5
+            0x00];      // Stop
 
         let mut vm = VM::new(bytecode);
 
@@ -278,7 +282,13 @@ mod tests {
 
     #[test]
     fn test_vm_store_load() {
-        let bytecode = vec![0x01, 0x00, 0x01, 0x64, 0x07,0x01,0x00,0x08,0x00]; // Push 0, Push 100, Store, Push 0, Load, Stop 
+        let bytecode = vec![
+            0x01, 0x00, // 0: Push 0     
+            0x01, 0x64, // 2: Push 100    
+            0x07,       // 4: Store       
+            0x01, 0x00, // 5: Push 0      
+            0x08,       // 7: Load        
+            0x00];      // 8: Stop 
 
         let mut vm = VM::new(bytecode);
 
@@ -286,28 +296,73 @@ mod tests {
         assert_eq!(result, Ok(()));
         assert_eq!(vm.stack.pop(), Some(100));
         assert_eq!(vm.memory.load(0), 100);
-        assert_eq!(vm.pc, 9);
+        assert_eq!(vm.pc, 8);
     }
 
     #[test]
     fn test_vm_return() {
-        let bytecode = vec![0x01, 0x2A, 0x0B]; // Push 42, Return
+        let bytecode = vec![
+            0x01, 0x2A, // 0: Push 42   
+            0x0B];      // 2: Return
         
         let mut vm = VM::new(bytecode);
 
         let result = vm.run();
         assert_eq!(result, Ok(()));
         assert_eq!(vm.return_value, Some(42));
-        assert_eq!(vm.pc, 1);
+        assert_eq!(vm.pc, 2);
     }
 
     #[test]
     fn test_vm_jump() {
-        let bytecode = vec![0x01, 0x06,0x09,0x01,0xFF,0x00,0x01,0x2A, 0x0B];
+        let bytecode = vec![
+            0x01, 0x06,       // 0: Push 6     
+            0x09,             // 2: Jump       
+            0x01,0xFF,        // 3: Push 255   (skip)
+            0x00,             // 5: Stop       (skip)
+            0x01,0x2A,        // 6: Push 42    
+            0x0B];            // 8: Return
 
         let mut vm = VM::new(bytecode);
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
+        assert_eq!(vm.pc, 8);
+    }
+
+    #[test]
+    fn test_vm_jumpi_true() {
+        let bytecode = vec![
+            0x01, 0x01, // 0: PUSH 1
+            0x01, 0x06, // 2: PUSH 6
+            0x0A,       // 4: JUMPI
+            0x00,       // 5: STOP
+            0x01, 0x2A, // 6: PUSH 42
+            0x0B,       // 8: RETURN
+        ];
+
+        let mut vm = VM::new(bytecode);
+
+        assert_eq!(vm.run(), Ok(()));
+        assert_eq!(vm.return_value, Some(42));
+        assert_eq!(vm.pc, 8);
+    }
+
+    #[test]
+    fn test_vm_jumpi_false() {
+        let bytecode = vec![
+            0x01, 0x00, // 0: PUSH 0
+            0x01, 0x06, // 2: PUSH 6
+            0x0A,       // 4: JUMPI
+            0x01, 0x2A, // 5: PUSH 42
+            0x0B,       // 7: RETURN
+            0x00,       // 8: STOP
+        ];
+
+        let mut vm = VM::new(bytecode);
+
+        assert_eq!(vm.run(), Ok(()));
+        assert_eq!(vm.return_value, Some(42));
+        assert_eq!(vm.pc, 7);
     }
 }
