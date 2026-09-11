@@ -6,8 +6,6 @@ pub trait Host {
     fn emit(&mut self, event: i32);
 }
 
-
-
 use std::collections::HashMap;
 
 pub struct SimpleHost {
@@ -50,5 +48,4 @@ mod tests {
         host.storage_store(1, 42);
         assert_eq!(host.storage_load(1), 42);
     }
-
 }

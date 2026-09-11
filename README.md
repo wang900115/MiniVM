@@ -1,103 +1,34 @@
 # MiniVM
 
-A lightweight Virtual Machine (VM) implemented in Rust for learning how bytecode execution, opcodes, stack, memory, and program execution work.This project is designed as a simple foundation for understanding how blockchain and smart contract virtual machines work internally.
-## Run
+A lightweight Virtual Machine (VM) implemented in Rust for learning how bytecode execution and smart contract virtual machines work internally.
 
-Make sure Rust and Cargo are installed:
+## Current
 
-```bash
-rustc --version
-cargo --version
-```
+MiniVM currently supports:
 
-Clone the repository and enter the project directory:
+- Stack-based bytecode execution
+- Opcode system
+- Registers
+- Stack and memory
+- Arithmetic operations
+- Jump and conditional jump
+- Function calls and returns
+- Nested calls and call frames
+- Local variables
+- Gas system
+- Host interface
+- Contract storage
+- Event emission
+- Unit tests
 
-```bash
-git clone https://github.com/wang900115/MiniVM.git
-cd minivm
-```
+## Future
 
-Run the project:
+Planned features include:
 
-```bash
-cargo run
-```
-
-Run tests:
-
-```bash
-cargo test
-```
-
-Format the code:
-
-```bash
-cargo fmt
-```
-
-## Example
-
-The MiniVM executes bytecode using a stack-based execution model.
-
-Example program:
-
-```text
-PUSH 10
-PUSH 20
-ADD
-RETURN
-```
-
-Execution:
-
-```text
-PUSH 10
-Stack: [10]
-
-PUSH 20
-Stack: [10, 20]
-
-ADD
-Stack: [30]
-
-RETURN
-Result: 30
-```
-
-Another example:
-
-```text
-PUSH 10
-PUSH 20
-ADD
-PUSH 2
-MUL
-RETURN
-```
-
-The result is:
-
-```text
-60
-```
-
-The VM processes each opcode sequentially and uses the stack and memory to maintain execution state.
-
-## Future Features
-
-Planned improvements include:
-
-- More arithmetic and comparison opcodes
-- Conditional and unconditional jumps
-- Function calls
-- Better memory management
-- VM error handling
-- Gas / execution cost system
+- Contract-to-contract calls
+- Advanced gas system
+- Transaction context
+- Message handling
+- Contract balance and value transfer
 - Bytecode assembler
 - Bytecode disassembler
-- Persistent contract storage
-- Contract state
-- Message handling
-- More advanced smart contract execution features
-- Unit and integration tests
-- Improved compatibility with blockchain VM concepts
