@@ -12,7 +12,6 @@ impl Stack {
         }
     }
 
-
     pub fn push(&mut self, value: i32) {
         self.data.push(value);
     }
@@ -20,6 +19,18 @@ impl Stack {
     pub fn pop(&mut self) -> Option<i32> {
         self.data.pop()
     }
+
+    pub fn get(&self, index: usize) -> Option<i32> {
+        self.data.get(index).copied()
+    }
+
+    pub fn set(&mut self, index: usize, value: i32) -> Result<(), ()> {
+        if index  >= self.data.len() {
+            return Err(());
+        }
+        self.data[index] = value;
+        Ok(())
+    } 
 
     pub fn peek(&self) -> Option<&i32> {
         self.data.last()

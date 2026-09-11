@@ -21,6 +21,11 @@ pub enum Opcode {
     Jump  = 0x09,
     Jumpi = 0x0A,
     JumpDest = 0x0C,
+
+    Call = 0x0D,
+
+    LoadLocal = 0x0E,
+    StoreLocal = 0x0F,
 }
 
 impl TryFrom<u8> for Opcode {
@@ -43,6 +48,9 @@ impl TryFrom<u8> for Opcode {
             0x09 => Ok(Opcode::Jump),
             0x0A => Ok(Opcode::Jumpi),
             0x0C => Ok(Opcode::JumpDest),
+            0x0D => Ok(Opcode::Call),
+            0x0E => Ok(Opcode::LoadLocal),
+            0x0F => Ok(Opcode::StoreLocal),
             _ => Err(format!("Invalid opcode: 0x{:02X}", value)),
         }
     }
@@ -64,6 +72,9 @@ impl Opcode {
             Opcode::Jump  => 2,
             Opcode::Jumpi => 3,
             Opcode::JumpDest => 1,
+            Opcode::Call => 5,
+            Opcode::LoadLocal => 3,
+            Opcode::StoreLocal => 5,
         }
     }
 }
@@ -88,6 +99,9 @@ mod tests {
             (0x0A, Opcode::Jumpi),
             (0x0B, Opcode::Return),
             (0x0C, Opcode::JumpDest),
+            (0x0D, Opcode::Call),
+            (0x0E, Opcode::LoadLocal),
+            (0x0F, Opcode::StoreLocal),
         ];
         for (value, expected) in cases {
             assert_eq!(Opcode::try_from(value), Ok(expected));
@@ -96,15 +110,15 @@ mod tests {
 
     #[test]
     fn test_invalid_opcode() {
-        assert!(Opcode::try_from(0x0D).is_err());
+        assert!(Opcode::try_from(0x10).is_err());
         assert!(Opcode::try_from(0xFF).is_err());
     }
 
 
     #[test]
     fn test_invalid_opcode_error_message() {
-        let err = Opcode::try_from(0x0D).unwrap_err();
-        assert_eq!(err, "Invalid opcode: 0x0D");
+        let err = Opcode::try_from(0x10).unwrap_err();
+        assert_eq!(err, "Invalid opcode: 0x10");
         
         let err = Opcode::try_from(0xFF).unwrap_err();
         assert_eq!(err, "Invalid opcode: 0xFF");
