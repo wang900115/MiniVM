@@ -47,6 +47,25 @@ impl TryFrom<u8> for Opcode {
     }
 }
 
+impl Opcode {
+    pub fn gas_cost(&self) -> u64 {
+        match self {
+            Opcode::Stop => 0,
+            Opcode::Push => 1,
+            Opcode::Pop  => 1,
+            Opcode::Add  => 1,
+            Opcode::Sub  => 1,
+            Opcode::Mul  => 1,
+            Opcode::Div  => 1,
+            Opcode::Store => 5,
+            Opcode::Load  => 3,
+            Opcode::Jump  => 2,
+            Opcode::Jumpi => 3,
+            Opcode::Return => 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,6 +1,7 @@
 use crate::stack::Stack;
 use crate::memory::Memory;
 use crate::opcode::Opcode;
+use crate::gas::Gas;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum VMError {
@@ -11,6 +12,7 @@ pub enum VMError {
     InvalidJumpAddress,
     NegativeMemoryAddress,
     PushOperandMissing,
+    OutOfGas,
 }
 
 pub struct VM {
@@ -19,17 +21,20 @@ pub struct VM {
     pub pc: usize,
     pub bytecode: Vec<u8>,
     pub return_value: Option<i32>,
+    
+    pub gas: Gas,        // if vm try execute an opcode, it will consume gas first
 }
 
 
 impl VM {
-    pub fn new(bytecode: Vec<u8>) -> Self {
+    pub fn new(bytecode: Vec<u8>, gas_limit: u64) -> Self {
         Self {
             stack: Stack::new(),
             memory: Memory::new(),
             pc: 0,
             bytecode,
             return_value: None,
+            gas: Gas::new(gas_limit),
         }
     }
 
@@ -54,6 +59,12 @@ impl VM {
         let byte = self.bytecode[self.pc];
 
         let opcode = Opcode::try_from(byte).map_err(|_| VMError::InvalidOpcode(byte))?;
+
+        let gas_cost = opcode.gas_cost();
+
+        if !self.gas.consume(gas_cost) {
+            return Err(VMError::OutOfGas);
+        }
 
         match opcode {
             Opcode::Stop => {
@@ -190,33 +201,36 @@ mod tests {
     fn test_vm_new() {
         let bytecode = vec![0x00];
 
-        let vm = VM::new(bytecode);
+        let vm = VM::new(bytecode,100);
         assert_eq!(vm.pc, 0);
         assert_eq!(vm.bytecode, vec![0x00]);
         assert_eq!(vm.stack.len(), 0);
+        assert_eq!(vm.gas.remaining(), 100);
     }
 
     #[test]
     fn test_vm_stop() {
         let bytecode = vec![0x00];
 
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         let result = vm.step();
 
         assert_eq!(result, Ok(false));
         assert_eq!(vm.pc, 0);
+        assert_eq!(vm.gas.remaining(), 100);
     }
     
     #[test]
     fn test_vm_push() {
         let bytecode = vec![0x01, 0x0A]; // PUSH 10
-        let mut vm = VM::new(bytecode);
-
+        let mut vm = VM::new(bytecode, 100);
+        
         let result = vm.step(); // PUSH 10
         assert_eq!(result, Ok(true));
         assert_eq!(vm.stack.pop(), Some(10));
         assert_eq!(vm.pc, 2);
+        assert_eq!(vm.gas.remaining(), 99);
     }
 
     #[test]
@@ -228,19 +242,19 @@ mod tests {
             0x00,       // 5: STOP
         ];
 
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.stack.pop(), Some(10));
         assert_eq!(vm.pc, 5);
+        assert_eq!(vm.gas.remaining(), 97);
     }
-
 
     #[test]
     fn test_vm_add() {
         let bytecode = vec![0x01, 0x0A, 0x01, 0x14, 0x02]; // Push 10, Push 20, Add
     
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         let result = vm.step(); // Push 10
         assert_eq!(result, Ok(true));
@@ -251,13 +265,14 @@ mod tests {
 
         assert_eq!(vm.stack.pop(), Some(30));
         assert_eq!(vm.pc,5);
+        assert_eq!(vm.gas.remaining(), 97);
     }
 
     #[test]
     fn test_vm_sub() {
         let bytecode = vec![0x01, 0x14, 0x01, 0x0A, 0x03]; // Push 20, Push 10, Sub
     
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         let result = vm.step(); // Push 20
         assert_eq!(result, Ok(true));
@@ -268,14 +283,14 @@ mod tests {
 
         assert_eq!(vm.stack.pop(), Some(10));
         assert_eq!(vm.pc,5);
-    
+        assert_eq!(vm.gas.remaining(), 97);
     }
 
     #[test]
     fn test_vm_mul() {
         let bytecode = vec![0x01, 0x05, 0x01, 0x06, 0x04]; // Push 5, Push 6, Mul
 
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         let result = vm.step(); // Push 5
         assert_eq!(result, Ok(true));
@@ -286,13 +301,14 @@ mod tests {
 
         assert_eq!(vm.stack.pop(), Some(30));
         assert_eq!(vm.pc,5);
+        assert_eq!(vm.gas.remaining(), 97);
     }
 
     #[test]
     fn test_vm_div() {
         let bytecode = vec![0x01, 0x14, 0x01, 0x05, 0x05]; // Push 20, Push 5, Div
 
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         let result = vm.step(); // Push 20
         assert_eq!(result, Ok(true));
@@ -303,6 +319,7 @@ mod tests {
 
         assert_eq!(vm.stack.pop(), Some(4));
         assert_eq!(vm.pc,5);
+        assert_eq!(vm.gas.remaining(), 97);
     }
 
     #[test]
@@ -313,12 +330,13 @@ mod tests {
             0x02,       // Add     5
             0x00];      // Stop
 
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         let result = vm.run();
         assert_eq!(result, Ok(()));
         assert_eq!(vm.stack.pop(), Some(30));
         assert_eq!(vm.pc, 5);
+        assert_eq!(vm.gas.remaining(), 97);
     }
 
     #[test]
@@ -331,13 +349,14 @@ mod tests {
             0x08,       // 7: Load        
             0x00];      // 8: Stop 
 
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         let result = vm.run();
         assert_eq!(result, Ok(()));
         assert_eq!(vm.stack.pop(), Some(100));
         assert_eq!(vm.memory.load(0), 100);
         assert_eq!(vm.pc, 8);
+        assert_eq!(vm.gas.remaining(), 89);
     }
 
     #[test]
@@ -346,12 +365,13 @@ mod tests {
             0x01, 0x2A, // 0: Push 42   
             0x0B];      // 2: Return
         
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         let result = vm.run();
         assert_eq!(result, Ok(()));
         assert_eq!(vm.return_value, Some(42));
         assert_eq!(vm.pc, 2);
+        assert_eq!(vm.gas.remaining(), 99);
     }
 
     #[test]
@@ -364,11 +384,12 @@ mod tests {
             0x01,0x2A,        // 6: Push 42    
             0x0B];            // 8: Return
 
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
         assert_eq!(vm.pc, 8);
+        assert_eq!(vm.gas.remaining(), 96);
     }
 
     #[test]
@@ -382,11 +403,12 @@ mod tests {
             0x0B,       // 8: RETURN
         ];
 
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
         assert_eq!(vm.pc, 8);
+        assert_eq!(vm.gas.remaining(), 94);
     }
 
     #[test]
@@ -400,10 +422,11 @@ mod tests {
             0x00,       // 8: STOP
         ];
 
-        let mut vm = VM::new(bytecode);
+        let mut vm = VM::new(bytecode, 100);
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
         assert_eq!(vm.pc, 7);
+        assert_eq!(vm.gas.remaining(), 94);
     }
 }
