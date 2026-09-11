@@ -4,6 +4,7 @@ use crate::opcode::Opcode;
 use crate::gas::Gas;
 use crate::register::Register;
 use crate::call_frame::CallFrame;
+use crate::host::Host;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum VMError {
@@ -18,19 +19,21 @@ pub enum VMError {
     OutOfGas,
 }
 
-pub struct VM {
+pub struct VM<H: Host> {
     pub stack: Stack,
     pub memory: Memory,
-
+    
     pub bytecode: Vec<u8>,
     pub return_value: Option<i32>,
     pub register: Register,
     pub gas: Gas,        // if vm try execute an opcode, it will consume gas first
     pub call_stack: Vec<CallFrame>,
+
+    pub host: H,
 }
 
-impl VM {
-    pub fn new(bytecode: Vec<u8>, gas_limit: u64) -> Self {
+impl<H: Host> VM<H> {
+    pub fn new(bytecode: Vec<u8>, gas_limit: u64, host: H) -> Self {
         Self {
             stack: Stack::new(),
             memory: Memory::new(),
@@ -39,6 +42,7 @@ impl VM {
             return_value: None,
             gas: Gas::new(gas_limit),
             call_stack: Vec::new(),
+            host,
         }
     }
 
@@ -270,6 +274,32 @@ impl VM {
 
                 Ok(true)
             }
+
+            Opcode::StorageLoad => {
+                let key = self.pop_stack()?;
+                let value = self.host.storage_load(key);
+                self.push_stack(value);
+                self.register.pc += 1;
+
+                Ok(true)
+            }
+
+            Opcode::StorageStore => {
+                let value = self.pop_stack()?;
+                let key = self.pop_stack()?;
+                self.host.storage_store(key, value);
+                self.register.pc += 1;
+
+                Ok(true)
+            }
+
+            Opcode::Emit => {
+                let value = self.pop_stack()?;
+                self.host.emit(value);
+                self.register.pc += 1;
+
+                Ok(true)
+            }
         }
     }
 
@@ -296,12 +326,18 @@ impl VM {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::host::SimpleHost;
+
+
+    fn create_vm(bytecode: Vec<u8>) -> VM<SimpleHost> {
+        let host = SimpleHost::new();
+        VM::new(bytecode, 100, host)
+    }
 
     #[test]
     fn test_vm_new() {
         let bytecode = vec![0x00];
-
-        let vm = VM::new(bytecode,100);
+        let vm = create_vm(bytecode);
         assert_eq!(vm.register.pc, 0);
         assert_eq!(vm.bytecode, vec![0x00]);
         assert_eq!(vm.stack.len(), 0);
@@ -311,11 +347,8 @@ mod tests {
     #[test]
     fn test_vm_stop() {
         let bytecode = vec![0x00];
-
-        let mut vm = VM::new(bytecode, 100);
-
+        let mut vm = create_vm(bytecode);
         let result = vm.step();
-
         assert_eq!(result, Ok(false));
         assert_eq!(vm.register.pc, 0);
         assert_eq!(vm.gas.remaining(), 100);
@@ -324,8 +357,7 @@ mod tests {
     #[test]
     fn test_vm_push() {
         let bytecode = vec![0x01, 0x0A]; // PUSH 10
-        let mut vm = VM::new(bytecode, 100);
-        
+        let mut vm = create_vm(bytecode);
         let result = vm.step(); // PUSH 10
         assert_eq!(result, Ok(true));
         assert_eq!(vm.stack.pop(), Some(10));
@@ -342,8 +374,8 @@ mod tests {
             0x00,       // 5: STOP
         ];
 
-        let mut vm = VM::new(bytecode, 100);
-
+        let mut vm = create_vm(bytecode);
+        
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.stack.pop(), Some(10));
         assert_eq!(vm.register.pc, 5);
@@ -354,7 +386,7 @@ mod tests {
     fn test_vm_add() {
         let bytecode = vec![0x01, 0x0A, 0x01, 0x14, 0x02]; // Push 10, Push 20, Add
     
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         let result = vm.step(); // Push 10
         assert_eq!(result, Ok(true));
@@ -372,7 +404,7 @@ mod tests {
     fn test_vm_sub() {
         let bytecode = vec![0x01, 0x14, 0x01, 0x0A, 0x03]; // Push 20, Push 10, Sub
     
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         let result = vm.step(); // Push 20
         assert_eq!(result, Ok(true));
@@ -390,7 +422,7 @@ mod tests {
     fn test_vm_mul() {
         let bytecode = vec![0x01, 0x05, 0x01, 0x06, 0x04]; // Push 5, Push 6, Mul
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         let result = vm.step(); // Push 5
         assert_eq!(result, Ok(true));
@@ -408,7 +440,7 @@ mod tests {
     fn test_vm_div() {
         let bytecode = vec![0x01, 0x14, 0x01, 0x05, 0x05]; // Push 20, Push 5, Div
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         let result = vm.step(); // Push 20
         assert_eq!(result, Ok(true));
@@ -429,8 +461,8 @@ mod tests {
             0x01, 0x14, // Push 20 4
             0x02,       // Add     5
             0x00];      // Stop
-
-        let mut vm = VM::new(bytecode, 100);
+        
+        let mut vm = create_vm(bytecode);
 
         let result = vm.run();
         assert_eq!(result, Ok(()));
@@ -449,7 +481,7 @@ mod tests {
             0x08,       // 7: Load        
             0x00];      // 8: Stop 
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         let result = vm.run();
         assert_eq!(result, Ok(()));
@@ -465,7 +497,7 @@ mod tests {
             0x01, 0x2A, // 0: Push 42   
             0x0B];      // 2: Return
         
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         let result = vm.run();
         assert_eq!(result, Ok(()));
@@ -485,7 +517,7 @@ mod tests {
             0x01,0x2A,        // 7: Push 42    
             0x0B];            // 9: Return
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
@@ -502,7 +534,7 @@ mod tests {
             0x00,       // 3: STOP
         ];
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         assert!(vm.run().is_err());
     }
@@ -519,7 +551,7 @@ mod tests {
             0x0B,       // 9: RETURN
         ];
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
@@ -538,7 +570,7 @@ mod tests {
             0x00,       // 8: STOP
         ];
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
@@ -554,12 +586,12 @@ mod tests {
             0x00,       // 4: STOP                            
         ];
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
-        // 先把 stack 建立起來
+
         vm.step().unwrap();
 
-        // FP 預設為 0，所以 LOAD_LOCAL 0 會讀 stack[0]
+
         let result = vm.step();
 
         assert_eq!(result, Ok(true));
@@ -578,7 +610,7 @@ mod tests {
         0x00,       // 8: STOP
         ];
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         let result = vm.run();
 
@@ -606,7 +638,7 @@ mod tests {
             0x00,       // 16: STOP
         ];
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         let result = vm.run();
 
@@ -635,7 +667,7 @@ mod tests {
             0x0B,       // 13: RETURN                         
         ];
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         let result = vm.run();
 
@@ -667,7 +699,7 @@ mod tests {
             0x0B,       // 12: RETURN      8. [20]      
         ];
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         let result = vm.run();
 
@@ -715,7 +747,7 @@ mod tests {
             0x0B,       // 27: RETURN
         ];
 
-        let mut vm = VM::new(bytecode, 100);
+        let mut vm = create_vm(bytecode);
 
         let result = vm.run();
 
@@ -725,5 +757,39 @@ mod tests {
         assert_eq!(vm.register.fp, 0);
         assert_eq!(vm.register.sp, 0);
         assert!(vm.call_stack.is_empty());
+    }
+
+    #[test]
+    fn test_vm_storage() {
+        let bytecode = vec![
+            0x01, 0x01, // PUSH 1
+            0x01, 0x2A, // PUSH 42
+            0x11,       // STORAGE_STORE
+
+            0x01, 0x01, // PUSH 1
+            0x10,       // STORAGE_LOAD
+
+            0x00,       // STOP
+        ];
+
+        let mut vm = create_vm(bytecode);
+
+        assert_eq!(vm.run(), Ok(()));
+
+        assert_eq!(vm.stack.pop(), Some(42));
+    }
+
+    #[test]
+    fn test_vm_emit() {
+        let bytecode = vec![
+            0x01, 0x2A, // PUSH 42
+            0x12,       // EMIT
+            0x00,       // STOP
+        ];
+
+        let mut vm = create_vm(bytecode);
+
+        assert_eq!(vm.run(), Ok(()));
+        assert_eq!(vm.host.events, vec![42]);
     }
 }

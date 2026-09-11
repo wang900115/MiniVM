@@ -26,6 +26,10 @@ pub enum Opcode {
 
     LoadLocal = 0x0E,
     StoreLocal = 0x0F,
+
+    StorageLoad = 0x10,
+    StorageStore = 0x11,
+    Emit = 0x12,
 }
 
 impl TryFrom<u8> for Opcode {
@@ -51,6 +55,9 @@ impl TryFrom<u8> for Opcode {
             0x0D => Ok(Opcode::Call),
             0x0E => Ok(Opcode::LoadLocal),
             0x0F => Ok(Opcode::StoreLocal),
+            0x10 => Ok(Opcode::StorageLoad),
+            0x11 => Ok(Opcode::StorageStore),
+            0x12 => Ok(Opcode::Emit),
             _ => Err(format!("Invalid opcode: 0x{:02X}", value)),
         }
     }
@@ -75,6 +82,10 @@ impl Opcode {
             Opcode::Call => 5,
             Opcode::LoadLocal => 3,
             Opcode::StoreLocal => 5,
+            Opcode::StorageLoad => 3,
+            Opcode::StorageStore => 5,
+            Opcode::Emit => 2,
+
         }
     }
 }
@@ -102,6 +113,9 @@ mod tests {
             (0x0D, Opcode::Call),
             (0x0E, Opcode::LoadLocal),
             (0x0F, Opcode::StoreLocal),
+            (0x10, Opcode::StorageLoad),
+            (0x11, Opcode::StorageStore),
+            (0x12, Opcode::Emit),
         ];
         for (value, expected) in cases {
             assert_eq!(Opcode::try_from(value), Ok(expected));
@@ -110,15 +124,15 @@ mod tests {
 
     #[test]
     fn test_invalid_opcode() {
-        assert!(Opcode::try_from(0x10).is_err());
+        assert!(Opcode::try_from(0x13).is_err());
         assert!(Opcode::try_from(0xFF).is_err());
     }
 
 
     #[test]
     fn test_invalid_opcode_error_message() {
-        let err = Opcode::try_from(0x10).unwrap_err();
-        assert_eq!(err, "Invalid opcode: 0x10");
+        let err = Opcode::try_from(0x13).unwrap_err();
+        assert_eq!(err, "Invalid opcode: 0x13");
         
         let err = Opcode::try_from(0xFF).unwrap_err();
         assert_eq!(err, "Invalid opcode: 0xFF");

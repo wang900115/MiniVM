@@ -5,6 +5,7 @@ mod stack;
 mod vm;
 mod gas;
 mod register;
+mod host;
 
 fn main() {
     println!("Hello, world!");
