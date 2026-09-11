@@ -2,7 +2,16 @@ use crate::stack::Stack;
 use crate::memory::Memory;
 use crate::opcode::Opcode;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum VMError {
+    StackUnderflow,
+    DivisionByZero,
+    InvalidOpcode(u8),
+    ProgramCounterOutOfBounds,
+    InvalidJumpAddress,
+    NegativeMemoryAddress,
+    PushOperandMissing,
+}
 
 pub struct VM {
     pub stack: Stack,
@@ -24,7 +33,7 @@ impl VM {
         }
     }
 
-    pub fn run(&mut self) -> Result<(), String> {
+    pub fn run(&mut self) -> Result<(), VMError> {
         loop {
             let should_continue = self.step()?;
 
@@ -36,14 +45,15 @@ impl VM {
         Ok(())
     }
 
-    pub fn step(&mut self) -> Result<bool, String> {
+    pub fn step(&mut self) -> Result<bool, VMError> {
+
         if self.pc >= self.bytecode.len() {
-            return Err("Program counter out of bounds".to_string());
+            return Err(VMError::ProgramCounterOutOfBounds);
         }
 
         let byte = self.bytecode[self.pc];
 
-        let opcode = Opcode::try_from(byte)?;
+        let opcode = Opcode::try_from(byte).map_err(|_| VMError::InvalidOpcode(byte))?;
 
         match opcode {
             Opcode::Stop => {
@@ -52,7 +62,7 @@ impl VM {
 
             Opcode::Push => {
                 if self.pc + 1 >= self.bytecode.len() {
-                    return Err("Not enough bytes for Push operand".to_string());
+                    return Err(VMError::PushOperandMissing);
                 }
                 let operand = self.bytecode[self.pc + 1] as i32;
                 self.stack.push(operand);
@@ -61,9 +71,16 @@ impl VM {
                 Ok(true)
             }
 
+            Opcode::Pop => {
+                self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                self.pc += 1;
+
+                Ok(true)
+            }
+
             Opcode::Add => {
-                let b = self.stack.pop().ok_or("Stack underflow".to_string())?;
-                let a = self.stack.pop().ok_or("Stack underflow".to_string())?;
+                let b = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let a = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 self.stack.push(a + b);
                 self.pc += 1;
 
@@ -71,8 +88,8 @@ impl VM {
             }
 
             Opcode::Sub => {
-                let b = self.stack.pop().ok_or("Stack underflow".to_string())?;
-                let a = self.stack.pop().ok_or("Stack underflow".to_string())?;
+                let b = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let a = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 self.stack.push(a - b);
                 self.pc += 1;
 
@@ -80,8 +97,8 @@ impl VM {
             } 
 
             Opcode::Mul => {
-                let b = self.stack.pop().ok_or("Stack underflow".to_string())?;
-                let a = self.stack.pop().ok_or("Stack underflow".to_string())?;
+                let b = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let a = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 self.stack.push(a * b);
                 self.pc += 1;
 
@@ -89,10 +106,10 @@ impl VM {
             }
 
             Opcode::Div => {
-                let b = self.stack.pop().ok_or("Stack underflow".to_string())?;
-                let a = self.stack.pop().ok_or("Stack underflow".to_string())?;
+                let b = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let a = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 if b == 0 {
-                    return Err("Division by zero".to_string());
+                    return Err(VMError::DivisionByZero);
                 }
                 self.stack.push(a / b);
                 self.pc += 1;
@@ -101,10 +118,10 @@ impl VM {
             }
 
             Opcode::Store => {
-                let value = self.stack.pop().ok_or("Stack underflow".to_string())?;
-                let address = self.stack.pop().ok_or("Stack underflow".to_string())?;
+                let value = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let address = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 if address < 0 {
-                    return Err("Negative memory address".to_string());
+                    return Err(VMError::NegativeMemoryAddress);
                 }
                 self.memory.store(address as usize, value);
                 self.pc += 1;
@@ -113,9 +130,9 @@ impl VM {
             }
 
             Opcode::Load => {
-                let address = self.stack.pop().ok_or("Stack underflow".to_string())?;
+                let address = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 if address < 0 {
-                    return Err("Negative memory address".to_string());
+                    return Err(VMError::NegativeMemoryAddress);
                 }
                 let value = self.memory.load(address as usize);
                 self.stack.push(value);
@@ -125,13 +142,13 @@ impl VM {
             }
 
             Opcode::Jump => {
-                let address = self.stack.pop().ok_or("Stack underflow".to_string())?;
+                let address = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 if address < 0 {
-                    return Err("Invalid jump address".to_string());
+                    return Err(VMError::InvalidJumpAddress);
                 }
                 let address = address as usize;
                 if address >= self.bytecode.len() {
-                    return Err("Jump address out of bounds".to_string());
+                    return Err(VMError::InvalidJumpAddress);
                 }
                 self.pc = address;
 
@@ -139,15 +156,15 @@ impl VM {
             }
 
             Opcode::Jumpi => {
-                let address = self.stack.pop().ok_or("Stack underflow".to_string())?;
-                let condition = self.stack.pop().ok_or("Stack underflow".to_string())?;
+                let address = self.stack.pop().ok_or(VMError::StackUnderflow)?;
+                let condition = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 if condition != 0 {
                     if address < 0 {
-                        return Err("Invalid jump address".to_string());
+                        return Err(VMError::InvalidJumpAddress);
                     }
                     let address = address as usize;
                     if address >= self.bytecode.len() {
-                        return Err("Jump address out of bounds".to_string());
+                        return Err(VMError::InvalidJumpAddress);
                     }
                     self.pc = address;
                 } else {
@@ -157,13 +174,9 @@ impl VM {
             }
 
             Opcode::Return => {
-                let value = self.stack.pop().ok_or("Stack underflow".to_string())?;
+                let value = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 self.return_value = Some(value);
                 Ok(false)
-            }
-
-            _ => {
-                Err(format!("Unhandled opcode: {:?}", opcode))
             }
         }
     }
@@ -194,6 +207,34 @@ mod tests {
         assert_eq!(result, Ok(false));
         assert_eq!(vm.pc, 0);
     }
+    
+    #[test]
+    fn test_vm_push() {
+        let bytecode = vec![0x01, 0x0A]; // PUSH 10
+        let mut vm = VM::new(bytecode);
+
+        let result = vm.step(); // PUSH 10
+        assert_eq!(result, Ok(true));
+        assert_eq!(vm.stack.pop(), Some(10));
+        assert_eq!(vm.pc, 2);
+    }
+
+    #[test]
+    fn test_vm_pop() {
+        let bytecode = vec![
+            0x01, 0x0A, // 0: PUSH 10
+            0x01, 0x14, // 2: PUSH 20
+            0x06,       // 4: POP
+            0x00,       // 5: STOP
+        ];
+
+        let mut vm = VM::new(bytecode);
+
+        assert_eq!(vm.run(), Ok(()));
+        assert_eq!(vm.stack.pop(), Some(10));
+        assert_eq!(vm.pc, 5);
+    }
+
 
     #[test]
     fn test_vm_add() {
