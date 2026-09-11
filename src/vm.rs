@@ -158,9 +158,11 @@ impl VM {
                     return Err(VMError::InvalidJumpAddress);
                 }
                 let address = address as usize;
-                if address >= self.bytecode.len() {
+             
+                if !self.is_valid_jump_destination(address) {
                     return Err(VMError::InvalidJumpAddress);
                 }
+
                 self.pc = address;
 
                 Ok(true)
@@ -174,7 +176,7 @@ impl VM {
                         return Err(VMError::InvalidJumpAddress);
                     }
                     let address = address as usize;
-                    if address >= self.bytecode.len() {
+                    if !self.is_valid_jump_destination(address as usize) {
                         return Err(VMError::InvalidJumpAddress);
                     }
                     self.pc = address;
@@ -184,12 +186,26 @@ impl VM {
                 Ok(true)
             }
 
+            Opcode::JumpDest => {
+                // JumpDest is a marker and does not perform any action
+                self.pc += 1;
+
+                Ok(true)
+            }
+
             Opcode::Return => {
                 let value = self.stack.pop().ok_or(VMError::StackUnderflow)?;
                 self.return_value = Some(value);
                 Ok(false)
             }
         }
+    }
+
+    pub fn is_valid_jump_destination(&self, address: usize) -> bool {
+        if address >= self.bytecode.len() {
+            return false;
+        }
+        matches!(Opcode::try_from(self.bytecode[address]), Ok(Opcode::JumpDest))
     }
 }
 
@@ -375,21 +391,36 @@ mod tests {
     }
 
     #[test]
-    fn test_vm_jump() {
+    fn test_vm_jump_is_valid_destination() {
         let bytecode = vec![
             0x01, 0x06,       // 0: Push 6     
             0x09,             // 2: Jump       
             0x01,0xFF,        // 3: Push 255   (skip)
             0x00,             // 5: Stop       (skip)
-            0x01,0x2A,        // 6: Push 42    
-            0x0B];            // 8: Return
+            0x0C,             // 6: JumpDest
+            0x01,0x2A,        // 7: Push 42    
+            0x0B];            // 9: Return
 
         let mut vm = VM::new(bytecode, 100);
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
-        assert_eq!(vm.pc, 8);
-        assert_eq!(vm.gas.remaining(), 96);
+        assert_eq!(vm.pc, 9);
+        assert_eq!(vm.gas.remaining(),95);
+    }
+
+    #[test]
+    fn test_vm_jump_invalid_destination() {
+        let bytecode = vec![
+            0x01, 0x05, // 0: PUSH 5
+            0x09,       // 2: JUMP
+            0x0C,       // 4: JumpDest
+            0x00,       // 3: STOP
+        ];
+
+        let mut vm = VM::new(bytecode, 100);
+
+        assert!(vm.run().is_err());
     }
 
     #[test]
@@ -399,16 +430,17 @@ mod tests {
             0x01, 0x06, // 2: PUSH 6
             0x0A,       // 4: JUMPI
             0x00,       // 5: STOP
-            0x01, 0x2A, // 6: PUSH 42
-            0x0B,       // 8: RETURN
+            0x0C,       // 6: JumpDest
+            0x01, 0x2A, // 7: PUSH 42
+            0x0B,       // 9: RETURN
         ];
 
         let mut vm = VM::new(bytecode, 100);
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
-        assert_eq!(vm.pc, 8);
-        assert_eq!(vm.gas.remaining(), 94);
+        assert_eq!(vm.pc, 9);
+        assert_eq!(vm.gas.remaining(), 93);
     }
 
     #[test]
