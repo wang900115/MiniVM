@@ -5,6 +5,7 @@ use crate::gas::Gas;
 use crate::register::Register;
 use crate::call_frame::CallFrame;
 use crate::host::Host;
+use crate::contract::ContractInterface;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum VMError {
@@ -33,6 +34,11 @@ pub struct VM<H: Host> {
 }
 
 impl<H: Host> VM<H> {
+
+    pub fn from_contract<C: ContractInterface>(contract: &C, gas_limit: u64, host: H) -> Self {
+        Self::new(contract.bytecode().to_vec(), gas_limit, host)
+    }
+
     pub fn new(bytecode: Vec<u8>, gas_limit: u64, host: H) -> Self {
         Self {
             stack: Stack::new(),
@@ -327,11 +333,12 @@ impl<H: Host> VM<H> {
 mod tests {
     use super::*;
     use crate::host::SimpleHost;
-
+    use crate::contract::Contract;
 
     fn create_vm(bytecode: Vec<u8>) -> VM<SimpleHost> {
+        let contract = Contract::new(bytecode);
         let host = SimpleHost::new();
-        VM::new(bytecode, 100, host)
+        VM::from_contract(&contract, 100, host)
     }
 
     #[test]
