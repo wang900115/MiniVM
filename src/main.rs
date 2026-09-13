@@ -7,6 +7,7 @@ mod gas;
 mod register;
 mod host;
 mod contract;
+mod abi;
 
 fn main() {
     println!("Hello, world!");
