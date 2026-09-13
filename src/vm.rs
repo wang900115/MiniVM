@@ -14,6 +14,7 @@ pub enum VMError {
     InvalidOpcode(u8),
     ProgramCounterOutOfBounds,
     InvalidJumpAddress,
+    InvalidArgument,
     NegativeMemoryAddress,
     InvalidMemoryAddress,
     PushOperandMissing,
@@ -206,21 +207,31 @@ impl<H: Host> VM<H> {
             }
 
             Opcode::Call => {
+                let arg_count = self.pop_stack()?;
                 let address = self.pop_stack()?;
                 if address < 0 {
                     return Err(VMError::InvalidJumpAddress);
                 }
+                if arg_count < 0 {
+                    return Err(VMError::InvalidArgument);
+                }
+
                 let address = address as usize;
+                let arg_count = arg_count as usize;
                 if !self.is_valid_jump_destination(address) {
                     return Err(VMError::InvalidJumpAddress);
                 }
+
+                if self.stack.len() < arg_count {
+                    return Err(VMError::StackUnderflow);
+                }
+                let stack_base = self.stack.len() - arg_count;
                 self.call_stack.push(CallFrame {
                     return_pc: self.register.pc + 1,
-                    stack_base: self.stack.len(),
+                    stack_base:  stack_base,
                     previous_fp: self.register.fp,
                 });
-
-                self.register.fp = self.register.sp;
+                self.register.fp = stack_base;
                 self.register.pc = address;
 
                 Ok(true)
@@ -243,7 +254,12 @@ impl<H: Host> VM<H> {
                     Ok(true)
                 } else {
                     self.return_value = Some(value);
-                    
+                    self.register.pc = 0;
+                    self.register.fp = 0;
+                    self.register.sp = 0;
+                    self.call_stack.clear();
+                    self.stack.clear();
+
                     Ok(false)
                 }
             }
@@ -509,7 +525,7 @@ mod tests {
         let result = vm.run();
         assert_eq!(result, Ok(()));
         assert_eq!(vm.return_value, Some(42));
-        assert_eq!(vm.register.pc, 2);
+        assert_eq!(vm.register.pc, 0);
         assert_eq!(vm.gas.remaining(), 99);
     }
 
@@ -528,7 +544,7 @@ mod tests {
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
-        assert_eq!(vm.register.pc, 9);
+        assert_eq!(vm.register.pc, 0);
         assert_eq!(vm.gas.remaining(),95);
     }
 
@@ -562,7 +578,7 @@ mod tests {
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
-        assert_eq!(vm.register.pc, 9);
+        assert_eq!(vm.register.pc, 0);
         assert_eq!(vm.gas.remaining(), 93);
     }
 
@@ -581,7 +597,7 @@ mod tests {
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.return_value, Some(42));
-        assert_eq!(vm.register.pc, 7);
+        assert_eq!(vm.register.pc, 0);
         assert_eq!(vm.gas.remaining(), 94);
     }
 
@@ -661,17 +677,19 @@ mod tests {
     #[test]
     fn test_vm_call_frame() {
         let bytecode = vec![
-            0x01, 0x04, // 0: PUSH 4                         1. [4]
-            0x0D,       // 2: CALL                           2. []                   callframe: [3, 0, 0]
-            0x0B,       // 3: RETURN                         7. [42]
+            // main                                 stack:    pc:    sp:    fp:    callframe:                                       return_value 
+            0x01, 0x06, // 0: PUSH 6                [6]        2      1      0          []
+            0x01, 0x00, // 2: PUSH 0 arguments      [6, 0]     4      2      0          []
+            0x0D,       // 4: CALL                  []         6      0      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
+            0x0B,       // 5: RETURN                []         0      0      0          []                                              42
 
             // function
-            0x0C,       // 4: JUMPDEST
-            0x01, 0x00, // 5: PUSH 0       -> local slot     3. [0]                 
-            0x01, 0x2A, // 7: PUSH 42                        4. [0, 42]
-            0x0F, 0x00, // 9: STORE_LOCAL 0                  5. [42]
-            0x0E, 0x00, // 11: LOAD_LOCAL 0                  6. [42, 42]
-            0x0B,       // 13: RETURN                         
+            0x0C,       // 6: JUMPDEST              []         7      0      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
+            0x01, 0x00, // 7: PUSH 0 -> local slot  [0]        9      1      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
+            0x01, 0x2A, // 9: PUSH 42               [0, 42]    11     2      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
+            0x0F, 0x00, // 11: STORE_LOCAL 0        [42]       13     1      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
+            0x0E, 0x00, // 13: LOAD_LOCAL 0         [42,42]    15     2      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
+            0x0B,       // 15: RETURN               [42]        5     1      0          []                                              42
         ];
 
         let mut vm = create_vm(bytecode);
@@ -680,7 +698,41 @@ mod tests {
 
         assert_eq!(result, Ok(()));
         assert_eq!(vm.return_value, Some(42));
-        assert_eq!(vm.register.pc, 3);
+        assert_eq!(vm.register.pc, 0);
+        assert_eq!(vm.register.fp, 0);
+        assert_eq!(vm.register.sp, 0);
+        assert!(vm.call_stack.is_empty());
+    }
+
+    #[test]
+    fn test_vm_call_with_arguments() {
+        let bytecode = vec![
+            // main                                 stack:          pc:    sp:    fp:    callframe:                                      return_value                             
+            0x01, 0x0A, // 0: PUSH 10               [10]             2      1      0          []
+            0x01, 0x14, // 2: PUSH 20               [10, 20]         4      2      0          []
+
+            0x01, 0x0A, // 4: PUSH 10               [10, 20, 10]     6      3      0          []
+            0x01, 0x02, // 6: PUSH 2                [10, 20, 10, 2]  8      4      0          []
+            0x0D,       // 8: CALL                  [10, 20]         10     2      0          [return_pc: 9, stack_base: 2, previous_fp: 0]
+
+            0x0B,       // 9: RETURN                []               0      0      0          []                                              30
+
+            // function
+            0x0C,       // 10: JUMPDEST             [10, 20]         11     2      1          [return_pc: 9, stack_base: 2, previous_fp: 0] 
+
+            0x0E, 0x00, // 11: LOAD_LOCAL 0         [10, 20, 10]     13     3      1          [return_pc: 9, stack_base: 2, previous_fp: 0]
+            0x0E, 0x01, // 13: LOAD_LOCAL 1         [10, 20, 10, 20] 15     4      1          [return_pc: 9, stack_base: 2, previous_fp: 0]
+            0x02,       // 15: ADD                  [10, 20, 30]     16     3      1          [return_pc: 9, stack_base: 2, previous_fp: 0]
+            0x0B,       // 16: RETURN               [10, 20, 30]      9     3      0          []                                              
+        ];
+
+        let mut vm = create_vm(bytecode);
+
+        let result = vm.run();
+
+        assert_eq!(result, Ok(()));
+        assert_eq!(vm.return_value, Some(30));
+        assert_eq!(vm.register.pc, 0);
         assert_eq!(vm.register.fp, 0);
         assert_eq!(vm.register.sp, 0);
         assert!(vm.call_stack.is_empty());
@@ -688,22 +740,24 @@ mod tests {
 
     #[test]
     fn test_vm_nested_call() {
-        let bytecode = vec![
-            // main
-            0x01, 0x04, // 0: PUSH 4       1. [4]
-            0x0D,       // 2: CALL         2. []       callframe: [3, 0, 0]
-            0x0B,       // 3: RETURN
+        let bytecode = vec![      
+            // main                                 stack:          pc:    sp:    fp:    callframe:                                                                                                return_value         
+            0x01, 0x06, // 0: PUSH 6                [6]              2      1      0          []
+            0x01, 0x00, // 2: PUSH 0                [6, 0]           4      2      0          []
+            0x0D,       // 4: CALL                  []               6      0      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
+            0x0B,       // 5: RETURN                []               0      0      0          []                                                                                                       20
 
             // function A
-            0x0C,       // 4: JUMPDEST     3. []
-            0x01, 0x09, // 5: PUSH 9       4. [9]
-            0x0D,       // 7: CALL         5. []       callframe: [3, 0, 0] [8, 0, 0]
-            0x0B,       // 8: RETURN
+            0x0C,       // 6: JUMPDEST              []               7      0      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
+            0x01, 0x0D, // 7: PUSH 13               [13]             9      1      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
+            0x01, 0x00, // 9: PUSH 0                [13, 0]          11     2      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
+            0x0D,       // 11: CALL                 []               13      0      0           [[return_pc: 5, stack_base: 0, previous_fp: 0], [return_pc: 12, stack_base: 0, previous_fp: 0]]
+            0x0B,       // 12: RETURN               [20]             5       0      0           []
 
             // function B
-            0x0C,       // 9: JUMPDEST     6. []
-            0x01, 0x14, // 10: PUSH 20     7. [20]
-            0x0B,       // 12: RETURN      8. [20]      
+            0x0C,       // 13: JUMPDEST              []              14     0      0          [[return_pc: 5, stack_base: 0, previous_fp: 0], [return_pc: 12, stack_base: 0, previous_fp: 0]]
+            0x01, 0x14, // 14: PUSH 20               [20]            16     1      0          [[return_pc: 5, stack_base: 0, previous_fp: 0], [return_pc: 12, stack_base: 0, previous_fp: 0]]
+            0x0B,       // 16: RETURN                [20]            12     0      0          [return_pc: 5, stack_base: 0, previous_fp: 0]                                                        
         ];
 
         let mut vm = create_vm(bytecode);
@@ -712,7 +766,7 @@ mod tests {
 
         assert_eq!(result, Ok(()));
         assert_eq!(vm.return_value, Some(20));
-        assert_eq!(vm.register.pc, 3);
+        assert_eq!(vm.register.pc, 0);
         assert_eq!(vm.register.fp, 0);
         assert_eq!(vm.register.sp, 0);
         assert!(vm.call_stack.is_empty());
@@ -721,37 +775,38 @@ mod tests {
     #[test]
     fn test_vm_nested_call_local() {
         let bytecode = vec![
-
-            0x01, 0x04, // 0: PUSH 4
-            0x0D,       // 2: CALL
-            0x0B,       // 3: RETURN
-
+              // main                                 stack:          pc:    sp:    fp:    callframe:                                                                                                return_value      
+            0x01, 0x06, // 0: PUSH 6                   [6]             2      1      0          []
+            0x01, 0x00, // 2: PUSH 0                   [6, 0]          4      2      0          []
+            0x0D,       // 4: CALL                     []              6      0      0          [[return_pc: 5, stack_base: 0, previous_fp: 0]]
+            0x0B,       // 5: RETURN                   []              0      0      0                                                                                                                    10
 
             // function A
-            0x0C,       // 4: JUMPDEST
+            0x0C,       // 6: JUMPDEST                 []              7      0      0          [[return_pc: 5, stack_base: 0, previous_fp: 0]]
 
-            0x01, 0x00, // 5: PUSH 0       
-            0x01, 0x0A, // 7: PUSH 10
-            0x0F, 0x00, // 9: STORE_LOCAL 0 
+            0x01, 0x00, // 7: PUSH 0                   [0]             9      1      0          [[return_pc: 5, stack_base: 0, previous_fp: 0]]
+            0x01, 0x0A, // 9: PUSH 10                  [0, 10]         11     2      0          [[return_pc: 5, stack_base: 0, previous_fp: 0]]
+            0x0F, 0x00, // 11: STORE_LOCAL 0           [10]            13     1      0          [[return_pc: 5, stack_base: 0, previous_fp: 0]]
 
-            0x01, 0x12, // 11: PUSH 18    
-            0x0D,       // 13: CALL
+            // A -> B 
+            0x01, 0x16, // 13: PUSH 22                 [10, 22]         15     2      0          [[return_pc: 5, stack_base: 0, previous_fp: 0]]
+            0x01, 0x00, // 15: PUSH 0                  [10, 22, 0]      17     3      0          [[return_pc: 5, stack_base: 0, previous_fp: 0]]
+            0x0D,       // 17: CALL                    [10]             22     1      0          [[return_pc: 5, stack_base: 0, previous_fp: 0], [return_pc: 18, stack_base: 1, previous_fp: 0]]
 
-            0x06,       // 14: POP         
+            0x06,       // 18: POP                     [10]             19     1      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
 
-            0x0E, 0x00, // 15: LOAD_LOCAL 0 
-            0x0B,       // 17: RETURN
-
+            0x0E, 0x00, // 19: LOAD_LOCAL 0            [10, 10]         21     2      0          [[return_pc: 5, stack_base: 0, previous_fp: 0]]
+            0x0B,       // 21: RETURN                  [10]              5     1      0
 
             // function B
-            0x0C,       // 18: JUMPDEST
+            0x0C,       // 22: JUMPDEST                [10]             23     1      1          [[return_pc: 5, stack_base: 0, previous_fp: 0], [return_pc: 18, stack_base: 1, previous_fp: 0]]
 
-            0x01, 0x00, // 19: PUSH 0      
-            0x01, 0x14, // 21: PUSH 20
-            0x0F, 0x00, // 23: STORE_LOCAL 0 
+            0x01, 0x00, // 23: PUSH 0                  [10, 0]          25     2      1          [[return_pc: 5, stack_base: 0, previous_fp: 0], [return_pc: 18, stack_base: 1, previous_fp: 0]]
+            0x01, 0x14, // 25: PUSH 20                 [10, 0, 20]      27     3      1          [[return_pc: 5, stack_base: 0, previous_fp: 0], [return_pc: 18, stack_base: 1, previous_fp: 0]]
+            0x0F, 0x00, // 27: STORE_LOCAL 0           [10, 20]         29     1      1          [[return_pc: 5, stack_base: 0, previous_fp: 0], [return_pc: 18, stack_base: 1, previous_fp: 0]]
 
-            0x0E, 0x00, // 25: LOAD_LOCAL 0
-            0x0B,       // 27: RETURN
+            0x0E, 0x00, // 29: LOAD_LOCAL 0            [10, 20]         31     2      1          [[return_pc: 5, stack_base: 0, previous_fp: 0], [return_pc: 18, stack_base: 1, previous_fp: 0]]
+            0x0B,       // 31: RETURN                  [10, 20]         18     2      0          [return_pc: 5, stack_base: 0, previous_fp: 0]
         ];
 
         let mut vm = create_vm(bytecode);
@@ -760,7 +815,7 @@ mod tests {
 
         assert_eq!(result, Ok(()));
         assert_eq!(vm.return_value, Some(10));
-        assert_eq!(vm.register.pc, 3);
+        assert_eq!(vm.register.pc, 0);
         assert_eq!(vm.register.fp, 0);
         assert_eq!(vm.register.sp, 0);
         assert!(vm.call_stack.is_empty());
