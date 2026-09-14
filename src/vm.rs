@@ -6,6 +6,7 @@ use crate::register::Register;
 use crate::call_frame::CallFrame;
 use crate::host::Host;
 use crate::contract::ContractInterface;
+use crate::abi::{ContractAbi, AbiCall};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum VMError {
@@ -35,6 +36,18 @@ pub struct VM<H: Host> {
 }
 
 impl<H: Host> VM<H> {
+
+    pub fn prepare_call_abi(&mut self, abi: &ContractAbi, call: &AbiCall) -> Result<(), VMError> {
+        let encoded = abi
+        .encode_call(call)
+        .map_err(|_| VMError::InvalidArgument)?;
+
+        for value in encoded {
+            self.push_stack(value);
+        }
+
+        Ok(())
+    }
 
     pub fn from_contract<C: ContractInterface>(contract: &C, gas_limit: u64, host: H) -> Self {
         Self::new(contract.bytecode().to_vec(), gas_limit, host)
@@ -350,6 +363,7 @@ mod tests {
     use super::*;
     use crate::host::SimpleHost;
     use crate::contract::Contract;
+    use crate::abi::AbiFunction;
 
     fn create_vm(bytecode: Vec<u8>) -> VM<SimpleHost> {
         let contract = Contract::new(bytecode);
@@ -853,5 +867,38 @@ mod tests {
 
         assert_eq!(vm.run(), Ok(()));
         assert_eq!(vm.host.events, vec![42]);
+    }
+
+
+    #[test]
+    fn test_vm_abi_call() {
+        let bytecode = vec![
+            // main
+            0x0D,       // 0: CALL
+            0x0B,       // 1: RETURN
+
+            // function add
+            0x0C,       // 2: JUMPDEST
+            0x0E, 0x00, // 3: LOAD_LOCAL 0
+            0x0E, 0x01, // 5: LOAD_LOCAL 1
+            0x02,       // 7: ADD
+            0x0B,       // 8: RETURN
+        ];
+
+        let mut vm = create_vm(bytecode);
+
+        let mut abi = ContractAbi::new();
+
+        abi.add_function(
+            AbiFunction::new("add", 2, 2)
+        );
+
+        let call = AbiCall::new("add", vec![10, 20]);
+
+
+        vm.prepare_call_abi(&abi, &call).unwrap();
+
+        assert_eq!(vm.run(), Ok(()));
+        assert_eq!(vm.return_value, Some(30));
     }
 }

@@ -1,12 +1,31 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AbiError {
+    FunctionNotFound,
+    InvalidArgumentCount,
+}
+
+
+
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AbiCall {
     pub function: String,
     pub args: Vec<i32>,
 }
 
 impl AbiCall {
-    pub fn validate(&self, function: &AbiFunction) -> bool {
-        self.function == function.name && self.args.len() == function.arg_count
+    pub fn new(function: &str, args: Vec<i32>) -> Self {
+        Self {
+            function: function.to_string(),
+            args,
+        }
+    }
+
+    pub fn validate(&self, function: &AbiFunction) -> Result<(), AbiError> {
+        if self.args.len() != function.arg_count {
+            return Err(AbiError::InvalidArgumentCount);
+        }
+        Ok(())
     }
 
     pub fn encode(&self, function: &AbiFunction) -> Vec<i32> {
@@ -24,23 +43,42 @@ pub struct AbiFunction {
     pub arg_count: usize,
 }
 
+impl AbiFunction {
+    pub fn new(name: &str, address: usize, arg_count: usize) -> Self {
+        Self {
+            name: name.to_string(),
+            address,
+            arg_count,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContractAbi {
     pub functions: Vec<AbiFunction>,
 }
 
 impl ContractAbi {
+    pub fn new() -> Self {
+        Self { functions: Vec::new() }
+    }
+
+    pub fn add_function(&mut self, function: AbiFunction) {
+        self.functions.push(function);
+    }
+
     pub fn find_function(&self, name: &str) -> Option<&AbiFunction> {
         self.functions.iter().find(|f| f.name == name)
     }
 
-    pub fn encode_call(&self, call: &AbiCall) -> Option<Vec<i32>> {
-        let function = self.find_function(&call.function)?;
-        
-        if !call.validate(function) {
-            return None;
-        }
-        Some(call.encode(function))
+    pub fn encode_call(&self, call: &AbiCall) -> Result<Vec<i32>, AbiError> {
+        let function = self
+            .find_function(&call.function)
+            .ok_or(AbiError::FunctionNotFound)?;
+
+        call.validate(function)?;
+
+        Ok(call.encode(function))
     }
 }
 
@@ -54,42 +92,22 @@ mod tests {
             function: "add".to_string(),
             args: vec![10, 20],
         };
-
         let function = AbiFunction {
             name: "add".to_string(),
             address: 10,
             arg_count: 2,
         };
-
-        assert!(call.validate(&function));
-
+        assert!(call.validate(&function).is_ok());
         let encoded = call.encode(&function);
-
         assert_eq!(encoded, vec![10, 20, 10, 2]);
     }
 
     #[test]
     fn test_contract_abi_encode_call() {
-        let abi = ContractAbi {
-            functions: vec![
-                AbiFunction {
-                    name: "add".to_string(),
-                    address: 10,
-                    arg_count: 2,
-                },
-                AbiFunction {
-                    name: "sub".to_string(),
-                    address: 20,
-                    arg_count: 2,
-                },
-            ],
-        };
-
-        let call = AbiCall {
-            function: "add".to_string(),
-            args: vec![10, 20],
-        };
-
+        let mut abi = ContractAbi::new();
+        abi.add_function(AbiFunction::new("add", 10, 2));
+        abi.add_function(AbiFunction::new("sub", 20, 2));
+        let call = AbiCall::new("add", vec![10, 20]);
         let encoded = abi.encode_call(&call).unwrap();
 
         assert_eq!(encoded, vec![10, 20, 10, 2]);
